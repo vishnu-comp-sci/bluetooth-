@@ -1,0 +1,72 @@
+package main
+
+import (
+    "context"
+    "fmt"
+    "os"
+    "strings"
+    "time"
+
+    "github.com/go-ble/ble"
+    "github.com/go-ble/ble/linux"
+)
+
+func main() {
+    // Create a new BLE device.
+    d, err := linux.NewDevice()
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Failed to create BLE device: %v\n", err)
+        return
+    }
+    ble.SetDefaultDevice(d)
+
+    // Context with timeout for connection
+    ctx := ble.WithSigHandler(context.WithTimeout(context.Background(), 10*time.Second))
+
+    // Target device's Bluetooth address
+    targetAddr := "00:00:00:03:C4:33"
+
+    // Specific service and characteristic UUIDs
+    serviceUUID := ble.MustParse("6e400001-b5a3-f393-e0a9-e50e24dcca9e")
+    charUUID := ble.MustParse("6e400003-b5a3-f393-e0a9-e50e24dcca9e")
+
+    fmt.Println("Scanning for BLE devices...")
+    cln, err := ble.Connect(ctx, func(a ble.Advertisement) bool {
+        return strings.ToUpper(a.Addr().String()) == strings.ToUpper(targetAddr)
+    })
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Failed to connect: %v\n", err)
+        return
+    }
+    defer cln.CancelConnection()
+
+    fmt.Println("Connected. Discovering specified service and characteristic...")
+
+    // Discover specific service
+    svc, err := cln.DiscoverServices([]ble.UUID{serviceUUID})
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Failed to discover the specified service: %v\n", err)
+        return
+    }
+
+    // Discover specific characteristic
+    chars, err := cln.DiscoverCharacteristics([]ble.UUID{charUUID}, svc[0])
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Failed to discover the specified characteristic: %v\n", err)
+        return
+    }
+
+    // Subscribe to notifications from the specified characteristic
+    fmt.Println("Subscribing to notifications for the characteristic...")
+    err = cln.Subscribe(chars[0], false, func(req []byte) {
+        fmt.Printf("Received notification: %x\n", req)
+        // Here you would interpret the data according to the oximeter's data format
+    })
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Failed to subscribe to notifications: %v\n", err)
+        return
+    }
+
+    // Keep the program running to continue receiving notifications
+    select {}
+}
