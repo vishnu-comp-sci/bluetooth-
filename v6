@@ -1,0 +1,104 @@
+package main
+
+import (
+    "context"
+    "encoding/hex"
+    "fmt"
+    "os"
+    "strings"
+    "time"
+
+    "github.com/go-ble/ble"
+    "github.com/go-ble/ble/linux"
+)
+
+func main() {
+    // Create a new BLE device.
+    d, err := linux.NewDevice()
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Failed to create BLE device: %v\n", err)
+        return
+    }
+    ble.SetDefaultDevice(d)
+
+    // Context with timeout for connection
+    ctx := ble.WithSigHandler(context.WithTimeout(context.Background(), 10*time.Second))
+
+    // Target device's Bluetooth address
+    targetAddr := "00:00:00:03:C4:33"
+    fmt.Println("Scanning for BLE devices...")
+
+    cln, err := ble.Connect(ctx, func(a ble.Advertisement) bool {
+        return strings.ToUpper(a.Addr().String()) == strings.ToUpper(targetAddr)
+    })
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Failed to connect: %v\n", err)
+        return
+    }
+    defer cln.CancelConnection()
+    fmt.Println("Connected. Discovering specified service and characteristic...")
+
+    // Specific characteristic UUID to subscribe to
+    charUUID := ble.MustParse("6e400003-b5a3-f393-e0a9-e50e24dcca9e")
+
+    // Discover services
+    svcs, err := cln.DiscoverServices(nil)
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Failed to discover services: %v\n", err)
+        return
+    }
+
+    for _, svc := range svcs {
+        // Discover characteristics for the service
+        chars, err := cln.DiscoverCharacteristics([]ble.UUID{charUUID}, svc)
+        if err != nil {
+            fmt.Fprintf(os.Stderr, "Failed to discover characteristics for service %s: %v\n", svc.UUID, err)
+            continue
+        }
+
+        for _, char := range chars {
+            if char.UUID.Equal(charUUID) {
+                fmt.Println("Found characteristic, discovering descriptors...")
+
+                // Discover descriptors for the characteristic
+                descs, err := cln.DiscoverDescriptors(nil, char)
+                if err != nil {
+                    fmt.Fprintf(os.Stderr, "Failed to discover descriptors: %v\n", err)
+                    continue
+                }
+
+                for _, desc := range descs {
+                    // Check if the descriptor is a CCCD
+                    if desc.UUID.Equal(ble.MustParse("2902")) {
+                        fmt.Println("Found CCCD, attempting to enable notifications...")
+                        // Write to CCCD to enable notifications
+                        err = cln.WriteDescriptor(desc, []byte{0x01, 0x00}) // Enable notifications
+                        if err != nil {
+                            fmt.Fprintf(os.Stderr, "Failed to write to CCCD: %v\n", err)
+                            return
+                        }
+                        fmt.Println("Notifications enabled. Waiting for data...")
+
+                        // Subscribe to notifications
+                        err = cln.Subscribe(char, false, func(req []byte) {
+                            // Check if the packet matches the expected format
+                            if len(req) >= 6 && req[0] == 0xaa && req[1] == 0x55 && req[2] == 0x0f && req[3] == 0x08 {
+                                // Convert the hexadecimal values to decimal for SpO2 and Heart Rate
+                                spo2 := int(req[4])
+                                heartRate := int(req[5])
+                                fmt.Printf("SpO2: %d%%, Heart Rate: %d bpm\n", spo2, heartRate)
+                            }
+                        })
+                        if err != nil {
+                            fmt.Fprintf(os.Stderr, "Failed to subscribe to notifications: %v\n", err)
+                            return
+                        }
+
+                        // Keep the program running to continue receiving notifications
+                        select {}
+                    }
+                }
+            }
+        }
+    }
+}
