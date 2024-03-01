@@ -1,0 +1,60 @@
+package main
+
+import (
+    "context"
+    "fmt"
+    "os"
+    "strings"
+    "time"
+
+    "github.com/go-ble/ble"
+    "github.com/go-ble/ble/linux"
+)
+
+func main() {
+    // Create a new BLE device.
+    d, err := linux.NewDevice()
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Failed to create BLE device: %v\n", err)
+        return
+    }
+    ble.SetDefaultDevice(d)
+
+    // Context with timeout for connection
+    ctx := ble.WithSigHandler(context.WithTimeout(context.Background(), 10*time.Second))
+
+    // Scan for devices and connect to the first device with a name containing "OxySmart"
+    fmt.Println("Scanning for BLE devices...")
+    cln, err := ble.Connect(ctx, func(a ble.Advertisement) bool {
+        return strings.Contains(a.LocalName(), "OxySmart") // Adjust for the specific device name
+    })
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Failed to connect: %v\n", err)
+        return
+    }
+    defer cln.CancelConnection()
+
+    fmt.Println("Connected. Discovering services and characteristics...")
+    
+    // Discover services
+    svcs, err := cln.DiscoverServices(nil)
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Failed to discover services: %v\n", err)
+        return
+    }
+
+    for _, svc := range svcs {
+        fmt.Printf("Service: %s\n", svc.UUID)
+
+        // Discover characteristics for the service
+        chars, err := cln.DiscoverCharacteristics(nil, svc)
+        if err != nil {
+            fmt.Fprintf(os.Stderr, "Failed to discover characteristics for service %s: %v\n", svc.UUID, err)
+            continue
+        }
+
+        for _, char := range chars {
+            fmt.Printf("  Characteristic: %s\n", char.UUID)
+        }
+    }
+}
