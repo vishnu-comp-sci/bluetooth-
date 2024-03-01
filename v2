@@ -4,7 +4,6 @@ import (
     "context"
     "fmt"
     "os"
-    "strings"
     "time"
 
     "github.com/go-ble/ble"
@@ -23,10 +22,14 @@ func main() {
     // Context with timeout for connection
     ctx := ble.WithSigHandler(context.WithTimeout(context.Background(), 10*time.Second))
 
-    // Scan for devices and connect to the first device with a name containing "OxySmart"
+    // Target device's Bluetooth address
+    targetAddr := "00:00:00:03:C4:33"
+
+    // Scan for devices and connect to the device with the specified Bluetooth address
     fmt.Println("Scanning for BLE devices...")
     cln, err := ble.Connect(ctx, func(a ble.Advertisement) bool {
-        return strings.Contains(a.LocalName(), "OxySmart") // Adjust for the specific device name
+        // Check if the current device's address matches the target address
+        return strings.ToUpper(a.Addr().String()) == strings.ToUpper(targetAddr)
     })
     if err != nil {
         fmt.Fprintf(os.Stderr, "Failed to connect: %v\n", err)
